@@ -145,7 +145,8 @@ class ViewerClient(
         peerConnection?.setRemoteDescription(object : SimpleSdpObserver() {
             override fun onSetSuccess() {
                 peerConnection?.createAnswer(object : SimpleSdpObserver() {
-                    override fun onCreateSuccess(desc: SessionDescription) {
+                    override fun onCreateSuccess(desc: SessionDescription?) {
+                        if (desc == null) return
                         peerConnection?.setLocalDescription(SimpleSdpObserver(), desc)
                         send(JSONObject().apply {
                             put("type", "answer")
