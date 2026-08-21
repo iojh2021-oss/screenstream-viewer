@@ -9,7 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: {distribution: temurin, java-version: '17', cache: gradle}
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -17,8 +20,11 @@ jobs:
           gradle-version: '8.9'
       - name: Generate wrapper files
         run: gradle wrapper --gradle-version 8.9
-      - run: chmod +x ./gradlew
-      - run: ./gradlew assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
-        if: success()
-        with: {name: app-debug, path: app/build/outputs/apk/debug/app-debug.apk}
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenstream-viewer-debug-v1.1.0
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
