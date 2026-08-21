@@ -1,8 +1,10 @@
 package com.example.screenstreamviewer
 
+import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -11,18 +13,19 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.setPadding
 import org.webrtc.EglBase
 import org.webrtc.SurfaceViewRenderer
 
 class MainActivity : AppCompatActivity() {
-
     private lateinit var eglBase: EglBase
     private lateinit var videoRenderer: SurfaceViewRenderer
     private lateinit var statusText: TextView
     private lateinit var connectionForm: LinearLayout
     private lateinit var rootLayout: FrameLayout
+    private lateinit var serverInput: EditText
+    private lateinit var roomInput: EditText
     private var client: ViewerClient? = null
-
     private var lastTouchDownX = 0f
     private var lastTouchDownY = 0f
     private var lastTouchDownTime = 0L
@@ -36,95 +39,95 @@ class MainActivity : AppCompatActivity() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun buildUi() {
-        rootLayout = FrameLayout(this).apply {
-            setBackgroundColor(0xFF0D0F14.toInt())
+        rootLayout = FrameLayout(this).apply { setBackgroundColor(Color.rgb(8, 11, 18)) }
+        videoRenderer = SurfaceViewRenderer(this).apply {
+            init(eglBase.eglBaseContext, null)
+            setZOrderMediaOverlay(true)
+            setEnableHardwareScaler(true)
         }
-
-        videoRenderer = SurfaceViewRenderer(this)
-        videoRenderer.init(eglBase.eglBaseContext, null)
-        videoRenderer.setZOrderMediaOverlay(true)
-        rootLayout.addView(videoRenderer, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+        rootLayout.addView(videoRenderer, FrameLayout.LayoutParams(-1, -1))
 
         connectionForm = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(32), dp(32), dp(32), dp(32))
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(24))
+            background = roundedBackground(0xF0141A25.toInt(), dp(24))
         }
 
         val title = TextView(this).apply {
-            text = "ScreenStream Viewer"
-            textSize = 22f
-            setTextColor(0xFFC9A768.toInt())
+            text = "ScreenStream"
+            textSize = 30f
+            setTextColor(0xFFF5F7FA.toInt())
             gravity = Gravity.CENTER
         }
-
-        val serverInput = EditText(this).apply {
-            hint = "آدرس سرور (wss://...)"
+        val subtitle = TextView(this).apply {
+            text = "Remote screen viewer"
+            textSize = 14f
+            setTextColor(0xFF9AA6B6.toInt())
+            gravity = Gravity.CENTER
         }
-
-        val roomInput = EditText(this).apply {
-            hint = "کد اتاق"
-        }
-
+        serverInput = input("wss://server.example.com")
+        roomInput = input("Room code")
         val connectBtn = Button(this).apply {
-            text = "اتصال به گوشی"
+            text = "Connect"
+            textSize = 15f
+            isAllCaps = false
+            setTextColor(Color.WHITE)
             setOnClickListener {
                 val server = serverInput.text.toString().trim()
                 val room = roomInput.text.toString().trim()
                 if (server.isEmpty() || room.isEmpty()) {
-                    Toast.makeText(this@MainActivity, "آدرس و کد اتاق را وارد کنید", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "Enter the server and room code", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
                 connect(server, room)
             }
         }
-
         statusText = TextView(this).apply {
-            text = "منتظر اتصال..."
+            text = "Ready to connect"
+            textSize = 13f
+            setTextColor(0xFF9AA6B6.toInt())
             gravity = Gravity.CENTER
-            setTextColor(0xFFE9E2CF.toInt())
-            setPadding(0, dp(16), 0, 0)
         }
 
-        listOf(title, serverInput, roomInput, connectBtn, statusText).forEach {
-            val p = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            p.topMargin = dp(12)
-            connectionForm.addView(it, p)
+        listOf(title, subtitle, serverInput, roomInput, connectBtn, statusText).forEachIndexed { index, view ->
+            val p = LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT)
+            p.topMargin = if (index == 0) 0 else dp(12)
+            connectionForm.addView(view, p)
         }
-
-        rootLayout.addView(connectionForm, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { gravity = Gravity.CENTER })
-
+        rootLayout.addView(connectionForm, FrameLayout.LayoutParams(dp(340), ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER })
         setContentView(rootLayout)
         setupTouchForwarding()
     }
 
+    private fun input(hintText: String) = EditText(this).apply {
+        hint = hintText
+        textSize = 15f
+        setSingleLine(true)
+        setTextColor(0xFFF5F7FA.toInt())
+        setHintTextColor(0xFF687487.toInt())
+        setPadding(dp(16), dp(4), dp(16), dp(4))
+        background = roundedBackground(0xFF202938.toInt(), dp(14))
+    }
+
+    private fun roundedBackground(color: Int, radius: Int): android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable().apply { setColor(color); cornerRadius = radius.toFloat() }
+
     private fun connect(server: String, room: String) {
-        statusText.text = "در حال اتصال..."
+        client?.close()
+        statusText.text = "Connecting…"
+        connectionForm.visibility = View.VISIBLE
         client = ViewerClient(this, eglBase, server, room, object : ViewerClient.Callback {
-            override fun onConnected() {
-                runOnUiThread {
-                    statusText.text = "متصل شد"
-                    connectionForm.visibility = android.view.View.GONE
-                }
+            override fun onConnected() = runOnUiThread {
+                statusText.text = "Connected"
+                connectionForm.visibility = View.GONE
             }
-
-            override fun onDisconnected(reason: String) {
-                runOnUiThread {
-                    statusText.text = "اتصال قطع شد: $reason"
-                    connectionForm.visibility = android.view.View.VISIBLE
-                }
+            override fun onDisconnected(reason: String) = runOnUiThread {
+                statusText.text = "Disconnected: $reason"
+                connectionForm.visibility = View.VISIBLE
             }
-
-            override fun onRemoteVideo(track: org.webrtc.VideoTrack) {
-                runOnUiThread {
-                    track.addSink(videoRenderer)
-                }
+            override fun onRemoteVideo(track: org.webrtc.VideoTrack) = runOnUiThread {
+                track.addSink(videoRenderer)
             }
         })
         client?.connect()
@@ -132,32 +135,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupTouchForwarding() {
         videoRenderer.setOnTouchListener { view, event ->
-            val xNorm = event.x / view.width
-            val yNorm = event.y / view.height
-            when (event.action) {
+            if (view.width <= 0 || view.height <= 0) return@setOnTouchListener true
+            val x = (event.x / view.width).coerceIn(0f, 1f)
+            val y = (event.y / view.height).coerceIn(0f, 1f)
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    lastTouchDownX = xNorm
-                    lastTouchDownY = yNorm
-                    lastTouchDownTime = System.currentTimeMillis()
+                    lastTouchDownX = x; lastTouchDownY = y; lastTouchDownTime = System.currentTimeMillis()
                 }
                 MotionEvent.ACTION_UP -> {
                     val duration = System.currentTimeMillis() - lastTouchDownTime
-                    val dx = kotlin.math.abs(xNorm - lastTouchDownX)
-                    val dy = kotlin.math.abs(yNorm - lastTouchDownY)
-                    if (dx < 0.02 && dy < 0.02) {
-                        client?.sendTap(xNorm, yNorm)
-                    } else {
-                        client?.sendSwipe(lastTouchDownX, lastTouchDownY, xNorm, yNorm, duration)
-                    }
+                    val dx = kotlin.math.abs(x - lastTouchDownX)
+                    val dy = kotlin.math.abs(y - lastTouchDownY)
+                    if (dx < 0.02f && dy < 0.02f) client?.sendTap(x, y)
+                    else client?.sendSwipe(lastTouchDownX, lastTouchDownY, x, y, duration.coerceAtMost(5000L))
                 }
+                MotionEvent.ACTION_CANCEL -> return@setOnTouchListener true
             }
             true
         }
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         client?.close()
         videoRenderer.release()
+        eglBase.release()
+        super.onDestroy()
     }
 }
