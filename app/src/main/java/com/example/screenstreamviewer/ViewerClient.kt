@@ -41,6 +41,8 @@ class ViewerClient(
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var dataChannel: DataChannel? = null
+    private val pendingIceCandidates = mutableListOf<IceCandidate>()
+    private var remoteDescriptionSet = false
     private var closed = false
 
     fun connect() {
@@ -72,6 +74,7 @@ class ViewerClient(
                         "offer" -> handleOffer(msg.getJSONObject("sdp"))
                         "ice-candidate" -> handleIceCandidate(msg.getJSONObject("candidate"))
                         "peer-left" -> callback.onDisconnected("Remote device disconnected")
+                        "error" -> callback.onDisconnected(msg.optString("message", "Signaling server error"))
                     }
                 }.onFailure { callback.onDisconnected("Invalid signaling message") }
             }
@@ -88,18 +91,19 @@ class ViewerClient(
         val mid = c.optString("sdpMid", null)
         val index = c.optInt("sdpMLineIndex", -1)
         val candidate = c.optString("candidate", "")
-        if (mid != null && index >= 0 && candidate.isNotBlank()) {
-            peerConnection?.addIceCandidate(IceCandidate(mid, index, candidate))
-        }
+        if (mid == null || index < 0 || candidate.isBlank()) return
+        val iceCandidate = IceCandidate(mid, index, candidate)
+        if (!remoteDescriptionSet) pendingIceCandidates += iceCandidate
+        else peerConnection?.addIceCandidate(iceCandidate)
     }
 
     private fun handleOffer(sdp: JSONObject) {
         val factory = peerConnectionFactory ?: return
         peerConnection?.close()
+        pendingIceCandidates.clear()
+        remoteDescriptionSet = false
         val rtcConfig = PeerConnection.RTCConfiguration(
-            listOf(
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-            )
+            listOf(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
         )
         peerConnection = factory.createPeerConnection(rtcConfig, object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate) {
@@ -112,12 +116,8 @@ class ViewerClient(
                     })
                 })
             }
-            override fun onAddStream(stream: MediaStream) {
-                stream.videoTracks.firstOrNull()?.let(callback::onRemoteVideo)
-            }
-            override fun onTrack(transceiver: org.webrtc.RtpTransceiver) {
-                (transceiver.receiver.track() as? VideoTrack)?.let(callback::onRemoteVideo)
-            }
+            override fun onAddStream(stream: MediaStream) { stream.videoTracks.firstOrNull()?.let(callback::onRemoteVideo) }
+            override fun onTrack(transceiver: org.webrtc.RtpTransceiver) { (transceiver.receiver.track() as? VideoTrack)?.let(callback::onRemoteVideo) }
             override fun onDataChannel(channel: DataChannel) { dataChannel = channel }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                 when (state) {
@@ -145,6 +145,9 @@ class ViewerClient(
         val description = SessionDescription(SessionDescription.Type.OFFER, sdp.getString("sdp"))
         peerConnection?.setRemoteDescription(object : SimpleSdpObserver() {
             override fun onSetSuccess() {
+                remoteDescriptionSet = true
+                pendingIceCandidates.forEach { peerConnection?.addIceCandidate(it) }
+                pendingIceCandidates.clear()
                 peerConnection?.createAnswer(object : SimpleSdpObserver() {
                     override fun onCreateSuccess(desc: SessionDescription?) {
                         if (desc == null) return
@@ -184,6 +187,7 @@ class ViewerClient(
         dataChannel?.close(); dataChannel = null
         peerConnection?.close(); peerConnection = null
         peerConnectionFactory?.dispose(); peerConnectionFactory = null
+        pendingIceCandidates.clear()
     }
 }
 
